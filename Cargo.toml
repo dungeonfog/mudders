@@ -10,7 +10,7 @@ keywords = ["lexicographical", "string-distance"]
 license = "MIT"
 
 [badges]
-travis-ci = { repository = "https://github.com/Follpvosten/mudders", branch = "master" }
+travis-ci = { repository = "Follpvosten/mudders", branch = "master" }
 maintenance = { status = "actively-developed" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
