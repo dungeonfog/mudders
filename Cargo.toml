@@ -1,10 +1,11 @@
 [package]
 name = "mudders"
-version = "0.0.0"
+version = "0.0.1"
 authors = ["Follpvosten <wolfi@karpador.xyz>"]
 edition = "2018"
 description = "Generating Lexicographically-Evenly-Spaced Strings, or: Mudder.js in Rust."
 repository = "https://github.com/Follpvosten/mudders"
+documentation = "https://docs.rs/mudders"
 readme = "README.md"
 keywords = ["lexicographical", "string-distance"]
 license = "MIT"
