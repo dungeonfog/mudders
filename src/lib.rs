@@ -16,6 +16,7 @@ Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```
 use mudders::SymbolTable;
+
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
@@ -142,7 +143,7 @@ impl SymbolTable {
                         };
 
                         // After the end key, we definitely do not continue.
-                        if key.as_str() > end {
+                        if key.as_str() > end && !end.is_empty() {
                             None
                         } else if key.as_str() < start {
                             // If we're prior to the start key...
@@ -232,4 +233,53 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert_eq!(vec!["aq", "at", "aw"], result);
     }
+
+    #[test]
+    fn empty_start() {
+        let table = SymbolTable::from_str("abc").unwrap();
+        let result = table.mudder("", "c", 2);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn empty_end() {
+        let table = SymbolTable::from_str("abc").unwrap();
+        let result = table.mudder("b", "", 2);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn only_amount() {
+        let table = SymbolTable::alphabet();
+        // TODO: Should we add an alias for this?
+        let result = table.mudder("", "", 10);
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn values_sorting_correct() {
+        let values = SymbolTable::alphabet().mudder("", "", 12);
+        let mut iter = values.into_iter();
+        while let (Some(one), Some(two)) = (iter.next(), iter.next()) {
+            assert!(one < two);
+        }
+    }
+
+    // TODO: Make this test pass.
+    // Currently, this works fine until it gets to `table.mudder("a", "ab", 1)`.
+    // At this point, it incorrectly returns `aa`, which makes it impossible to
+    // put any more strings inbetween.
+    // It should actually add one level to the depth and return `aan`.
+    // We should also return an error on inputs like (`a`, `aa`).
+    //#[test]
+    //fn values_consistently_between_start_and_end() {
+    //    let table = SymbolTable::alphabet();
+    //    let mut right = String::from("z");
+    //    for _ in 0..500 {
+    //        let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
+    //        assert_ne!(new_val, right);
+    //        assert_ne!(new_val, "a");
+    //        right = new_val;
+    //    }
+    //}
 }
