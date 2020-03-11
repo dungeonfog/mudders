@@ -97,16 +97,74 @@ impl SymbolTable {
     /// Generate `amount` strings that lexicographically sort between `start` and `end`.
     /// The algorithm will try to make them as evenly-spaced as possible.
     pub fn mudder(&self, start: &str, end: &str, amount: usize) -> Vec<String> {
-        let depth = log(self.0.len(), amount + 2);
+        // Iterator version which doesn't handle different string lengths correctly.
+        //let matching_count: Option<usize> =
+        //    // Through all characters in start and end,
+        //    start
+        //        .chars()
+        //        .zip(end.chars())
+        //        // attach an index...
+        //        .enumerate()
+        //        // ...give me the first one where chars differ...
+        //        .find(|(_, (c1, c2))| c1 != c2)
+        //        // ...and return the index at which this happens.
+        //        // The index logically comes *after* the last matching char,
+        //        // so it's matching_index + 1, or the amount of matches.
+        //        // If the index is 0, there are no common characters, so None.
+        //        .and_then(|(index, _)| if index == 0 { None } else { Some(index) });
+
+        // loop version
+        let matching_count: usize = {
+            // Iterate through the chars of both given inputs...
+            let (mut start_chars, mut end_chars) = (start.chars(), end.chars());
+            // Counting to get the index.
+            let mut i: usize = 0;
+            loop {
+                // Advance the iterators...
+                match (start_chars.next(), end_chars.next()) {
+                    // As long as there's two characters that match, increment i.
+                    (Some(sc), Some(ec)) if sc == ec => {
+                        i += 1;
+                        continue;
+                    }
+                    // break with i as soon as any mismatch happens or both iterators run out.
+                    // matching_count will either be 0, indicating that there's
+                    // no leading common pattern, or something other than 0, in
+                    // that case it's the count of common characters.
+                    (None, None) | (Some(_), None) | (None, Some(_)) | (Some(_), Some(_)) => {
+                        break i
+                    }
+                }
+            }
+        };
+
+        // Calculate the distance between the first non-matching characters.
+        // If matching_count is greater than 0, we have leading common chars,
+        // so we skip those, but add the amount to the depth base.
+        let depth_base =
+            self.distance_between_first_chars(&start[matching_count..], &end[matching_count..]);
+        // We also add matching_count to the depth because if we're starting
+        // with a common prefix, we have at least x leading characters that
+        // will be the same for all substrings.
+        let depth = dbg!(log(dbg!(depth_base), amount + 2)) + matching_count;
+
         // TODO: Maybe keeping this as an iterator would be more efficient,
         // but it would have to be cloned at least once to get the pool length.
-        let pool: Vec<String> = dbg!(self.traverse("".into(), start, end, depth + 1).collect());
+        let pool: Vec<String> = dbg!(self.traverse("".into(), start, end, depth).collect());
         if amount == 1 {
             // return the middle element
-            vec![pool[pool.len() / 2].clone()]
+            vec![pool[(pool.len() as f64 / 2.0f64).floor() as usize].clone()]
         } else {
-            let step = (pool.len() / amount) - (depth + 1);
+            let step = (pool.len() / amount) - (depth);
             let mut pool = pool.into_iter();
+            if dbg!(step) == 0 {
+                // Skip the first one.
+                // If we have a step of 0, this most likely means that we had an
+                // extremely small pool (since depth was equal to pool.len() / 2).
+                // In this case, it's hopefully safe to assume that we have `start`
+                // as the first item in pool.
+                pool.next();
+            }
             // `amount` times...
             (1..=amount)
                 // Take the value at `step`, advancing the iterator by `step`
@@ -157,21 +215,64 @@ impl SymbolTable {
                         } else {
                             // Traverse normally, returning both the parent and sub key,
                             // in all other cases.
-                            let iter = std::iter::once(key.clone());
-                            if key == end {
-                                Some(Box::new(iter))
+                            if key.len() < 2 {
+                                let iter = std::iter::once(key.clone());
+                                Some(if key == end {
+                                    Box::new(iter)
+                                } else {
+                                    Box::new(iter.chain(self.traverse(key, start, end, depth - 1)))
+                                })
                             } else {
-                                Some(Box::new(iter.chain(self.traverse(
-                                    key,
-                                    start,
-                                    end,
-                                    depth - 1,
-                                ))))
+                                let first = key.chars().next().unwrap();
+                                Some(if key.chars().all(|c| c == first) {
+                                    // If our characters are all the same,
+                                    // don't add key to the list, only the subtree.
+                                    Box::new(self.traverse(key, start, end, depth - 1))
+                                } else {
+                                    Box::new(std::iter::once(key.clone()).chain(self.traverse(
+                                        key,
+                                        start,
+                                        end,
+                                        depth - 1,
+                                    )))
+                                })
                             }
                         }
                     })
                     .flatten(),
             )
+        }
+    }
+
+    fn distance_between_first_chars(&self, start: &str, end: &str) -> usize {
+        // check the first character of both strings...
+        match (start.chars().next(), end.chars().next()) {
+            // if both have a first char, compare them.
+            (Some(start_char), Some(end_char)) => {
+                assert!(dbg!(start_char) < dbg!(end_char));
+                let distance = end_char as u8 - start_char as u8;
+                distance as usize + 1
+            }
+            // if only the start has a first char, compare it to our last possible symbol.
+            (Some(start_char), None) => {
+                let end_u8 = self.0.last().unwrap();
+                assert!(start_char < *end_u8 as char);
+                let distance = end_u8 - start_char as u8;
+                distance as usize + 1
+            }
+            // if only the end has a first char, compare it to our first possible symbol.
+            (None, Some(end_char)) => {
+                let start_u8 = self.0.first().unwrap();
+                // assert!(dbg!(*start_u8) < dbg!(end_char as u8));
+                let distance = end_char as u8 - start_u8;
+                if distance == 0 {
+                    2
+                } else {
+                    distance as usize + 1
+                }
+            }
+            // if there's no characters given, the whole symboltable is our range.
+            _ => self.0.len(),
         }
     }
 }
@@ -227,7 +328,7 @@ mod tests {
         let table = SymbolTable::from_str("abc").unwrap();
         let result = table.mudder("a", "b", 1);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "ab");
+        assert_eq!(result[0], "ac");
         let table = SymbolTable::alphabet();
         let result = table.mudder("anhui", "azazel", 3);
         assert_eq!(result.len(), 3);
@@ -265,21 +366,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn differing_input_lengths() {
+        let table = SymbolTable::alphabet();
+        let result = table.mudder("a", "ab", 1);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].starts_with('a'));
+    }
+
     // TODO: Make this test pass.
     // Currently, this works fine until it gets to `table.mudder("a", "ab", 1)`.
     // At this point, it incorrectly returns `aa`, which makes it impossible to
     // put any more strings inbetween.
     // It should actually add one level to the depth and return `aan`.
     // We should also return an error on inputs like (`a`, `aa`).
-    //#[test]
-    //fn values_consistently_between_start_and_end() {
-    //    let table = SymbolTable::alphabet();
-    //    let mut right = String::from("z");
-    //    for _ in 0..500 {
-    //        let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
-    //        assert_ne!(new_val, right);
-    //        assert_ne!(new_val, "a");
-    //        right = new_val;
-    //    }
-    //}
+    // #[test]
+    // fn values_consistently_between_start_and_end() {
+    //     let table = SymbolTable::alphabet();
+    //     let mut right = String::from("n");
+    //     for _ in 0..50 {
+    //         let new_val = dbg!(table.mudder("f", &right, 1))[0].clone();
+    //         assert_ne!(new_val, right);
+    //         assert_ne!(new_val, "a");
+    //         right = new_val;
+    //     }
+    // }
 }
