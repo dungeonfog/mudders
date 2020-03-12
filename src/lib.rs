@@ -30,14 +30,14 @@ assert!(one_string < "z");
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();
 let result = table.mudder("a", "b", 2);
 assert_eq!(result.len(), 2);
-assert!(result[0].as_str() > "a", result[1].as_str() > "a");
-assert!(result[0].as_str() < "b", result[1].as_str() < "b");
+assert!(result[0].as_str() > "a" && result[1].as_str() > "a");
+assert!(result[0].as_str() < "b" && result[1].as_str() < "b");
 
 // The strings *should* be evenly-spaced and as short as they can be.
 let table = SymbolTable::alphabet();
 let result = table.mudder("anhui", "azazel", 3);
 assert_eq!(result.len(), 3);
-assert_eq!(vec!["aq", "at", "aw"], result);
+assert_eq!(vec!["aq", "as", "av"], result);
 ```
 
 ## Notes
@@ -96,27 +96,41 @@ impl SymbolTable {
 
     /// Generate `amount` strings that lexicographically sort between `start` and `end`.
     /// The algorithm will try to make them as evenly-spaced as possible.
-    pub fn mudder(&self, start: &str, end: &str, amount: usize) -> Vec<String> {
-        // Iterator version which doesn't handle different string lengths correctly.
-        //let matching_count: Option<usize> =
-        //    // Through all characters in start and end,
-        //    start
-        //        .chars()
-        //        .zip(end.chars())
-        //        // attach an index...
-        //        .enumerate()
-        //        // ...give me the first one where chars differ...
-        //        .find(|(_, (c1, c2))| c1 != c2)
-        //        // ...and return the index at which this happens.
-        //        // The index logically comes *after* the last matching char,
-        //        // so it's matching_index + 1, or the amount of matches.
-        //        // If the index is 0, there are no common characters, so None.
-        //        .and_then(|(index, _)| if index == 0 { None } else { Some(index) });
-
-        // loop version
+    ///
+    /// When both parameters are empty strings, `amount` new strings that are
+    /// in lexicographical order are returned.
+    ///
+    /// If parameter `b` is lexicographically before `a`, they are swapped internally.
+    ///
+    /// ```
+    /// # use mudders::SymbolTable;
+    /// // Using the included alphabet table
+    /// let table = SymbolTable::alphabet();
+    /// // Generate 10 strings from scratch
+    /// let results = table.mudder("", "", 10);
+    /// assert!(results.len() == 10);
+    /// // results should look something like ["b", "d", "f", ..., "r", "t"]
+    /// ```
+    pub fn mudder(&self, a: &str, b: &str, amount: usize) -> Vec<String> {
+        let (a, b) = if a.is_empty() || b.is_empty() {
+            // If an argument is empty, keep the order
+            (a, b)
+        } else if b < a {
+            // If they're not empty and b is lexicographically prior to a, swap them
+            (b, a)
+        } else {
+            // In any other case, keep the order
+            // TODO: Handle a == b
+            (a, b)
+        };
+        // Count the characters start and end have in common.
         let matching_count: usize = {
             // Iterate through the chars of both given inputs...
-            let (mut start_chars, mut end_chars) = (start.chars(), end.chars());
+            let (mut start_chars, mut end_chars) = (a.chars(), b.chars());
+            // We need to keep track of this, because:
+            // In the case of `a` == `"a"` and `b` == `"aab"`,
+            // we actually need to compare `""` to `"b"` later on, not `""` to `"a"`.
+            let mut last_start_char = '\0';
             // Counting to get the index.
             let mut i: usize = 0;
             loop {
@@ -124,6 +138,14 @@ impl SymbolTable {
                 match (start_chars.next(), end_chars.next()) {
                     // As long as there's two characters that match, increment i.
                     (Some(sc), Some(ec)) if sc == ec => {
+                        last_start_char = sc;
+                        i += 1;
+                        continue;
+                    }
+                    // If start_chars have run out, but end_chars haven't, check
+                    // if the current end char matches the last start char.
+                    // If it does, we still need to increment our counter.
+                    (None, Some(ec)) if ec == last_start_char => {
                         i += 1;
                         continue;
                     }
@@ -137,39 +159,51 @@ impl SymbolTable {
                 }
             }
         };
+        let non_empty_input_count = [a, b].iter().filter(|s| !s.is_empty()).count();
+        let computed_amount = || amount + non_empty_input_count;
 
         // Calculate the distance between the first non-matching characters.
         // If matching_count is greater than 0, we have leading common chars,
         // so we skip those, but add the amount to the depth base.
-        let depth_base =
-            self.distance_between_first_chars(&start[matching_count..], &end[matching_count..]);
+        let branching_factor = self.distance_between_first_chars(
+            //            v--- matching_count might be higher than a.len()
+            //           vvv   because we might count past a's end
+            &a[std::cmp::min(matching_count, a.len())..],
+            &b[matching_count..],
+        );
         // We also add matching_count to the depth because if we're starting
         // with a common prefix, we have at least x leading characters that
         // will be the same for all substrings.
-        let depth = dbg!(log(dbg!(depth_base), amount + 2)) + matching_count;
+        let depth =
+            depth_for(dbg!(branching_factor), dbg!(computed_amount())) + dbg!(matching_count);
 
         // TODO: Maybe keeping this as an iterator would be more efficient,
         // but it would have to be cloned at least once to get the pool length.
-        let pool: Vec<String> = dbg!(self.traverse("".into(), start, end, depth).collect());
+        let pool: Vec<String> = self.traverse("".into(), a, b, dbg!(depth)).collect();
+        let pool = if (pool.len() as isize) - (non_empty_input_count as isize) < amount as isize {
+            let depth = depth + depth_for(branching_factor, computed_amount() + pool.len());
+            dbg!(self.traverse("".into(), a, b, dbg!(depth)).collect())
+        } else {
+            pool
+        };
         if amount == 1 {
-            // return the middle element
             vec![pool[(pool.len() as f64 / 2.0f64).floor() as usize].clone()]
         } else {
-            let step = (pool.len() / amount) - (depth);
-            let mut pool = pool.into_iter();
-            if dbg!(step) == 0 {
-                // Skip the first one.
-                // If we have a step of 0, this most likely means that we had an
-                // extremely small pool (since depth was equal to pool.len() / 2).
-                // In this case, it's hopefully safe to assume that we have `start`
-                // as the first item in pool.
-                pool.next();
-            }
-            // `amount` times...
-            (1..=amount)
-                // Take the value at `step`, advancing the iterator by `step`
-                .map(|_| pool.nth(step).unwrap())
-                // Return the results
+            let step = computed_amount() as f64 / pool.len() as f64;
+            let mut counter = 0f64;
+            let mut last_value = 0;
+            pool.into_iter()
+                .filter(|_| {
+                    counter += step;
+                    let new_value = counter.floor() as usize;
+                    if new_value > last_value {
+                        last_value = new_value;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .take(amount)
                 .collect()
         }
     }
@@ -277,12 +311,11 @@ impl SymbolTable {
     }
 }
 
-/// Just for internal convenience/readability, since `f64::log` kinda has
-/// flipped the usual logarithm arguments.
-///
-/// Also converts the result to usize directly.
-fn log(base: usize, anti: usize) -> usize {
-    f64::log(anti as f64, base as f64).ceil() as usize
+/// Calculate the required depth for the given values.
+/// `branching_factor` is used as the logarithm base, `n_elements` as the
+/// value, and the result is rounded up and cast to usize.
+fn depth_for(branching_factor: usize, n_elements: usize) -> usize {
+    f64::log(n_elements as f64, branching_factor as f64).ceil() as usize
 }
 
 impl FromStr for SymbolTable {
@@ -324,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn outputs_match_mudderjs() {
+    fn outputs_more_or_less_match_mudderjs() {
         let table = SymbolTable::from_str("abc").unwrap();
         let result = table.mudder("a", "b", 1);
         assert_eq!(result.len(), 1);
@@ -332,7 +365,7 @@ mod tests {
         let table = SymbolTable::alphabet();
         let result = table.mudder("anhui", "azazel", 3);
         assert_eq!(result.len(), 3);
-        assert_eq!(vec!["aq", "at", "aw"], result);
+        assert_eq!(vec!["aq", "as", "av"], result);
     }
 
     #[test]
@@ -374,21 +407,15 @@ mod tests {
         assert!(result[0].starts_with('a'));
     }
 
-    // TODO: Make this test pass.
-    // Currently, this works fine until it gets to `table.mudder("a", "ab", 1)`.
-    // At this point, it incorrectly returns `aa`, which makes it impossible to
-    // put any more strings inbetween.
-    // It should actually add one level to the depth and return `aan`.
-    // We should also return an error on inputs like (`a`, `aa`).
-    // #[test]
-    // fn values_consistently_between_start_and_end() {
-    //     let table = SymbolTable::alphabet();
-    //     let mut right = String::from("n");
-    //     for _ in 0..50 {
-    //         let new_val = dbg!(table.mudder("f", &right, 1))[0].clone();
-    //         assert_ne!(new_val, right);
-    //         assert_ne!(new_val, "a");
-    //         right = new_val;
-    //     }
-    // }
+    #[test]
+    fn values_consistently_between_start_and_end() {
+        let table = SymbolTable::alphabet();
+        let mut right = String::from("z");
+        for _ in 0..500 {
+            let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
+            assert!(new_val < right);
+            assert!(new_val.as_str() > "a");
+            right = new_val;
+        }
+    }
 }

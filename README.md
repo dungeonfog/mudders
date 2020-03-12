@@ -21,6 +21,7 @@ Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```rust
 use mudders::SymbolTable;
+
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
@@ -34,14 +35,14 @@ assert!(one_string < "z");
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();
 let result = table.mudder("a", "b", 2);
 assert_eq!(result.len(), 2);
-assert!(result[0].as_str() > "a", result[1].as_str() > "a");
-assert!(result[0].as_str() < "b", result[1].as_str() < "b");
+assert!(result[0].as_str() > "a" && result[1].as_str() > "a");
+assert!(result[0].as_str() < "b" && result[1].as_str() < "b");
 
 // The strings *should* be evenly-spaced and as short as they can be.
 let table = SymbolTable::alphabet();
 let result = table.mudder("anhui", "azazel", 3);
 assert_eq!(result.len(), 3);
-assert_eq!(vec!["aq", "at", "aw"], result);
+assert_eq!(vec!["aq", "as", "av"], result);
 ```
 
 ### Notes
