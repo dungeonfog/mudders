@@ -9,7 +9,7 @@ for the original work of the author and their contributors!
 Add a dependency in your Cargo.toml:
 
 ```toml
-mudders = "0.0.1"
+mudders = "0.0.2"
 ```
 
 Now you can generate lexicographically-spaced strings in a few different ways:
@@ -208,6 +208,8 @@ impl SymbolTable {
         }
     }
 
+    // fn
+
     /// Traverses a virtual tree of strings to the given depth.
     fn traverse<'a>(
         &'a self,
@@ -312,6 +314,7 @@ impl SymbolTable {
 }
 
 /// Calculate the required depth for the given values.
+///
 /// `branching_factor` is used as the logarithm base, `n_elements` as the
 /// value, and the result is rounded up and cast to usize.
 fn depth_for(branching_factor: usize, n_elements: usize) -> usize {
@@ -328,20 +331,25 @@ impl FromStr for SymbolTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Public API tests:
+
     #[test]
     #[allow(clippy::char_lit_as_u8)]
     fn valid_tables_work() {
-        let _table = SymbolTable::new(&[1, 2, 3, 4, 5]);
+        assert!(SymbolTable::new(&[1, 2, 3, 4, 5]).is_ok());
+        assert!(SymbolTable::new(&[125, 126, 127]).is_ok());
         // Possible, but to be discouraged
-        let _table = SymbolTable::new(&['a' as u8, 'b' as u8]);
-        let _table = SymbolTable::from_chars(&['a', 'b', 'c']).unwrap();
-        let _table = SymbolTable::from_str("0123").unwrap();
+        assert!(SymbolTable::new(&['a' as u8, 'f' as u8]).is_ok());
+        assert!(SymbolTable::from_chars(&['a', 'b', 'c']).is_ok());
+        assert!(SymbolTable::from_str("0123").is_ok());
     }
 
     #[test]
     fn invalid_tables_error() {
         assert!(SymbolTable::from_str("🍅😂👶🏻").is_err());
         assert!(SymbolTable::from_chars(&['🍌', '🍣', '⛈']).is_err());
+        assert!(SymbolTable::new(&[128, 129, 130]).is_err());
     }
 
     #[test]
@@ -410,12 +418,89 @@ mod tests {
     #[test]
     fn values_consistently_between_start_and_end() {
         let table = SymbolTable::alphabet();
-        let mut right = String::from("z");
-        for _ in 0..500 {
-            let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
-            assert!(new_val < right);
-            assert!(new_val.as_str() > "a");
-            right = new_val;
+        {
+            // From z to a
+            let mut right = String::from("z");
+            for _ in 0..500 {
+                let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
+                assert!(new_val < right);
+                assert!(new_val.as_str() > "a");
+                right = new_val;
+            }
         }
+        {
+            // And from a to z
+            let mut left = String::from("a");
+            // TODO:    vv this test fails for higher numbers. FIXME!
+            for _ in 0..17 {
+                let new_val = dbg!(table.mudder(&left, "z", 1))[0].clone();
+                assert!(new_val > left);
+                assert!(new_val.as_str() < "z");
+                left = new_val;
+            }
+        }
+    }
+
+    // Internal/private method tests:
+
+    #[test]
+    fn traverse_alphabet() {
+        fn traverse_alphabet(a: &str, b: &str, depth: usize) -> Vec<String> {
+            SymbolTable::alphabet()
+                .traverse("".into(), a, b, depth)
+                .collect()
+        }
+        assert_eq!(traverse_alphabet("a", "d", 1), vec!["a", "b", "c", "d"]);
+        assert_eq!(
+            traverse_alphabet("a", "z", 1),
+            ('a' as u32 as u8..='z' as u32 as u8)
+                .map(|c| (c as char).to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            traverse_alphabet("a", "b", 2),
+            vec![
+                "a", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an",
+                "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az", "b"
+            ]
+        )
+    }
+
+    #[test]
+    fn traverse_custom() {
+        fn traverse(table: &str, a: &str, b: &str, depth: usize) -> Vec<String> {
+            let table = SymbolTable::from_str(table).unwrap();
+            table.traverse("".into(), a, b, depth).collect()
+        }
+        assert_eq!(traverse("abc", "a", "c", 1), vec!["a", "b", "c"]);
+        assert_eq!(
+            traverse("abc", "a", "c", 2),
+            vec!["a", "ab", "ac", "b", "ba", "bc", "c"]
+        );
+        assert_eq!(
+            traverse("0123456789", "1", "2", 2),
+            vec!["1", "10", "12", "13", "14", "15", "16", "17", "18", "19", "2"]
+        );
+    }
+
+    #[test]
+    fn distance_between_first_chars_correct() {
+        let table = SymbolTable::alphabet();
+        assert_eq!(table.distance_between_first_chars("a", "b"), 2);
+        assert_eq!(table.distance_between_first_chars("a", "z"), 26);
+        assert_eq!(table.distance_between_first_chars("", ""), 26);
+        assert_eq!(table.distance_between_first_chars("n", ""), 13);
+        assert_eq!(table.distance_between_first_chars("", "n"), 14);
+        assert_eq!(table.distance_between_first_chars("y", "z"), 2);
+        assert_eq!(table.distance_between_first_chars("a", "y"), 25);
+        assert_eq!(
+            table.distance_between_first_chars("aaaa", "zzzz"),
+            table.distance_between_first_chars("aa", "zz")
+        );
+
+        let table = SymbolTable::from_str("12345").unwrap();
+        assert_eq!(table.distance_between_first_chars("1", "2"), 2);
+        assert_eq!(table.distance_between_first_chars("1", "3"), 3);
+        assert_eq!(table.distance_between_first_chars("2", "3"), 2);
     }
 }
