@@ -16,11 +16,12 @@ Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```
 use mudders::SymbolTable;
+use std::num::NonZeroUsize;
 
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
-let result = table.mudder("a", "z", 1);
+let result = table.mudder("a", "z", NonZeroUsize::new(1).unwrap()).unwrap();
 // These strings are always lexicographically placed between `start` and `end`.
 let one_string = result[0].as_str();
 assert!(one_string > "a");
@@ -28,14 +29,14 @@ assert!(one_string < "z");
 
 // You can also define your own symbol tables
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();
-let result = table.mudder("a", "b", 2);
+let result = table.mudder("a", "b", NonZeroUsize::new(2).unwrap()).unwrap();
 assert_eq!(result.len(), 2);
 assert!(result[0].as_str() > "a" && result[1].as_str() > "a");
 assert!(result[0].as_str() < "b" && result[1].as_str() < "b");
 
 // The strings *should* be evenly-spaced and as short as they can be.
 let table = SymbolTable::alphabet();
-let result = table.mudder("anhui", "azazel", 3);
+let result = table.mudder("anhui", "azazel", NonZeroUsize::new(3).unwrap()).unwrap();
 assert_eq!(result.len(), 3);
 assert_eq!(vec!["aq", "as", "av"], result);
 ```
@@ -47,8 +48,10 @@ everyone™). Our default `::alphabet()` also only has lowercase letters.
 
 */
 
+use core::num::NonZeroUsize;
 use std::{convert::TryFrom, str::FromStr};
 
+#[macro_use]
 pub mod error;
 use error::*;
 
@@ -64,15 +67,15 @@ impl SymbolTable {
     /// The slice is internally sorted using `.sort()`.
     ///
     /// An error is returned if one of the given bytes is out of ASCII range.
-    pub fn new(source: &[u8]) -> Result<Self, NonAsciiError> {
-        if source.iter().any(|i| !i.is_ascii()) {
-            return Err(NonAsciiError::NonAscii);
-        }
+    pub fn new(source: &[u8]) -> Result<Self, CreationError> {
+        ensure! { !source.is_empty(), CreationError::EmptySlice }
+        ensure! { all_chars_ascii(&source), NonAsciiError::NonAsciiU8 }
         // Copy the values, we need to own them anyways...
         let mut vec: Vec<_> = source.iter().copied().collect();
         // Sort them so they're actually in order.
         // (You can pass in ['b', 'a'], but that's not usable internally I think.)
         vec.sort();
+        vec.dedup();
         Ok(Self(vec))
     }
 
@@ -80,10 +83,10 @@ impl SymbolTable {
     /// The slice is internally sorted using `.sort()`.
     ///
     /// An error is returned if one of the given characters is not ASCII.
-    pub fn from_chars(source: &[char]) -> Result<Self, NonAsciiError> {
+    pub fn from_chars(source: &[char]) -> Result<Self, CreationError> {
         let inner: Box<[u8]> = source
             .iter()
-            .map(|i| u8::try_from(*i as u32).map_err(NonAsciiError::from))
+            .map(|c| try_ascii_u8_from_char(*c))
             .collect::<Result<_, _>>()?;
         Ok(Self::new(&inner)?)
     }
@@ -104,14 +107,26 @@ impl SymbolTable {
     ///
     /// ```
     /// # use mudders::SymbolTable;
+    /// # use std::num::NonZeroUsize;
     /// // Using the included alphabet table
     /// let table = SymbolTable::alphabet();
     /// // Generate 10 strings from scratch
-    /// let results = table.mudder("", "", 10);
+    /// let results = table.mudder("", "", NonZeroUsize::new(10).unwrap()).unwrap();
     /// assert!(results.len() == 10);
     /// // results should look something like ["b", "d", "f", ..., "r", "t"]
     /// ```
-    pub fn mudder(&self, a: &str, b: &str, amount: usize) -> Vec<String> {
+    pub fn mudder(
+        &self,
+        a: &str,
+        b: &str,
+        amount: NonZeroUsize,
+    ) -> Result<Vec<String>, GenerationError> {
+        use error::InternalError::*;
+        use GenerationError::*;
+        ensure! { all_chars_ascii(a), NonAsciiError::NonAsciiU8 }
+        ensure! { all_chars_ascii(b), NonAsciiError::NonAsciiU8 }
+        ensure! { self.contains_all_chars(a), UnknownCharacters(a.to_string()) }
+        ensure! { self.contains_all_chars(b), UnknownCharacters(b.to_string()) }
         let (a, b) = if a.is_empty() || b.is_empty() {
             // If an argument is empty, keep the order
             (a, b)
@@ -119,10 +134,15 @@ impl SymbolTable {
             // If they're not empty and b is lexicographically prior to a, swap them
             (b, a)
         } else {
+            // You can't generate values between two matching strings.
+            ensure! { a != b, MatchingStrings(a.to_string()) }
             // In any other case, keep the order
-            // TODO: Handle a == b
             (a, b)
         };
+
+        // TODO: Check for lexicographical adjacency!
+        //ensure! { !lex_adjacent(a, b), LexAdjacentStrings(a.to_string(), b.to_string()) }
+
         // Count the characters start and end have in common.
         let matching_count: usize = {
             // Iterate through the chars of both given inputs...
@@ -159,8 +179,13 @@ impl SymbolTable {
                 }
             }
         };
+
+        // Count the number to add to the total requests amount.
+        // If a or b is empty, we need one item less in the pool;
+        // two items less if both are empty.
         let non_empty_input_count = [a, b].iter().filter(|s| !s.is_empty()).count();
-        let computed_amount = || amount + non_empty_input_count;
+        // For convenience
+        let computed_amount = || amount.get() + non_empty_input_count;
 
         // Calculate the distance between the first non-matching characters.
         // If matching_count is greater than 0, we have leading common chars,
@@ -170,29 +195,64 @@ impl SymbolTable {
             //           vvv   because we might count past a's end
             &a[std::cmp::min(matching_count, a.len())..],
             &b[matching_count..],
-        );
+        )?;
         // We also add matching_count to the depth because if we're starting
         // with a common prefix, we have at least x leading characters that
         // will be the same for all substrings.
-        let depth =
+        let mut depth =
             depth_for(dbg!(branching_factor), dbg!(computed_amount())) + dbg!(matching_count);
 
         // TODO: Maybe keeping this as an iterator would be more efficient,
         // but it would have to be cloned at least once to get the pool length.
         let pool: Vec<String> = self.traverse("".into(), a, b, dbg!(depth)).collect();
-        let pool = if (pool.len() as isize) - (non_empty_input_count as isize) < amount as isize {
-            let depth = depth + depth_for(branching_factor, computed_amount() + pool.len());
+        let pool = if (pool.len() as isize).saturating_sub(non_empty_input_count as isize)
+            < amount.get() as isize
+        {
+            depth += depth_for(branching_factor, computed_amount() + pool.len());
             dbg!(self.traverse("".into(), a, b, dbg!(depth)).collect())
         } else {
             pool
         };
-        if amount == 1 {
-            vec![pool[(pool.len() as f64 / 2.0f64).floor() as usize].clone()]
+        if (pool.len() as isize).saturating_sub(non_empty_input_count as isize)
+            < amount.get() as isize
+        {
+            // We still don't have enough items, so bail
+            panic!(
+                "Internal error: Failed to calculate the correct tree depth!
+This is a bug. Please report it at: https://github.com/Follpvosten/mudders/issues
+and make sure to include the following information:
+
+Symbols in table: {symbols:?}
+Given inputs: {a:?}, {b:?}, amount: {amount}
+matching_count: {m_count}
+non_empty_input_count: {ne_input_count}
+required pool length (computed amount): {comp_amount}
+branching_factor: {b_factor}
+final depth: {depth}
+pool: {pool:?} (length: {pool_len})",
+                symbols = self.0.iter().map(|i| *i as char).collect::<Box<[_]>>(),
+                a = a,
+                b = b,
+                amount = amount,
+                m_count = matching_count,
+                ne_input_count = non_empty_input_count,
+                comp_amount = computed_amount(),
+                b_factor = branching_factor,
+                depth = depth,
+                pool = pool,
+                pool_len = pool.len(),
+            )
+        }
+        Ok(if amount.get() == 1 {
+            pool.get(pool.len() / 2)
+                .map(|item| vec![item.clone()])
+                .ok_or_else(|| FailedToGetMiddle)?
         } else {
             let step = computed_amount() as f64 / pool.len() as f64;
             let mut counter = 0f64;
             let mut last_value = 0;
-            pool.into_iter()
+            let result: Vec<_> = pool
+                .into_iter()
                 .filter(|_| {
                     counter += step;
                     let new_value = counter.floor() as usize;
@@ -203,12 +263,12 @@ impl SymbolTable {
                         false
                     }
                 })
-                .take(amount)
-                .collect()
-        }
+                .take(amount.into())
+                .collect();
+            ensure! { result.len() == amount.get(), NotEnoughItemsInPool };
+            result
+        })
     }
-
-    // fn
 
     /// Traverses a virtual tree of strings to the given depth.
     fn traverse<'a>(
@@ -219,9 +279,10 @@ impl SymbolTable {
         depth: usize,
     ) -> Box<dyn Iterator<Item = String> + 'a> {
         if depth == 0 {
+            // If we've reached depth 0, we don't go futher.
             Box::new(std::iter::empty())
         } else {
-            // Generate all possible mutations on level
+            // Generate all possible mutations on the current depth
             Box::new(
                 self.0
                     .iter()
@@ -280,27 +341,33 @@ impl SymbolTable {
         }
     }
 
-    fn distance_between_first_chars(&self, start: &str, end: &str) -> usize {
+    fn distance_between_first_chars(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> Result<usize, GenerationError> {
+        use InternalError::WrongCharOrder;
         // check the first character of both strings...
-        match (start.chars().next(), end.chars().next()) {
+        Ok(match (start.chars().next(), end.chars().next()) {
             // if both have a first char, compare them.
             (Some(start_char), Some(end_char)) => {
-                assert!(dbg!(start_char) < dbg!(end_char));
-                let distance = end_char as u8 - start_char as u8;
+                ensure! { start_char < end_char, WrongCharOrder(start_char, end_char) }
+                let distance =
+                    try_ascii_u8_from_char(end_char)? - try_ascii_u8_from_char(start_char)?;
                 distance as usize + 1
             }
             // if only the start has a first char, compare it to our last possible symbol.
             (Some(start_char), None) => {
                 let end_u8 = self.0.last().unwrap();
-                assert!(start_char < *end_u8 as char);
-                let distance = end_u8 - start_char as u8;
+                ensure! { start_char < *end_u8 as char, WrongCharOrder(start_char, *end_u8 as char) }
+                let distance = end_u8 - try_ascii_u8_from_char(start_char)?;
                 distance as usize + 1
             }
             // if only the end has a first char, compare it to our first possible symbol.
             (None, Some(end_char)) => {
                 let start_u8 = self.0.first().unwrap();
-                // assert!(dbg!(*start_u8) < dbg!(end_char as u8));
-                let distance = end_char as u8 - start_u8;
+                ensure! { *start_u8 < end_char as u8, WrongCharOrder(*start_u8 as char, end_char) }
+                let distance = try_ascii_u8_from_char(end_char)? - start_u8;
                 if distance == 0 {
                     2
                 } else {
@@ -309,7 +376,11 @@ impl SymbolTable {
             }
             // if there's no characters given, the whole symboltable is our range.
             _ => self.0.len(),
-        }
+        })
+    }
+
+    fn contains_all_chars(&self, chars: impl AsRef<[u8]>) -> bool {
+        chars.as_ref().iter().all(|c| self.0.contains(c))
     }
 }
 
@@ -321,9 +392,16 @@ fn depth_for(branching_factor: usize, n_elements: usize) -> usize {
     f64::log(n_elements as f64, branching_factor as f64).ceil() as usize
 }
 
+fn try_ascii_u8_from_char(c: char) -> Result<u8, NonAsciiError> {
+    u8::try_from(c as u32).map_err(NonAsciiError::from)
+}
+fn all_chars_ascii(chars: impl AsRef<[u8]>) -> bool {
+    chars.as_ref().iter().all(|i| i.is_ascii())
+}
+
 impl FromStr for SymbolTable {
-    type Err = NonAsciiError;
-    fn from_str(s: &str) -> Result<Self, NonAsciiError> {
+    type Err = CreationError;
+    fn from_str(s: &str) -> Result<Self, CreationError> {
         Self::from_chars(&s.chars().collect::<Box<[_]>>())
     }
 }
@@ -331,6 +409,11 @@ impl FromStr for SymbolTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::num::NonZeroUsize;
+
+    fn n(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
 
     // Public API tests:
 
@@ -350,16 +433,72 @@ mod tests {
         assert!(SymbolTable::from_str("🍅😂👶🏻").is_err());
         assert!(SymbolTable::from_chars(&['🍌', '🍣', '⛈']).is_err());
         assert!(SymbolTable::new(&[128, 129, 130]).is_err());
+        assert!(SymbolTable::new(&[]).is_err());
+        assert!(SymbolTable::from_chars(&[]).is_err());
+        assert!(SymbolTable::from_str("").is_err());
     }
+
+    #[test]
+    fn unknown_chars_error() {
+        use error::GenerationError::UnknownCharacters;
+        // You cannot pass in strings with characters not in the SymbolTable:
+        let table = SymbolTable::alphabet();
+        assert_eq!(
+            table.mudder("123", "()/", n(1)),
+            Err(UnknownCharacters("123".into()))
+        );
+        assert_eq!(
+            table.mudder("a", "123", n(1)),
+            Err(UnknownCharacters("123".into()))
+        );
+        assert_eq!(
+            table.mudder("0)(", "b", n(1)),
+            Err(UnknownCharacters("0)(".into()))
+        );
+        let table = SymbolTable::from_str("123").unwrap();
+        assert_eq!(
+            table.mudder("a", "b", n(1)),
+            Err(UnknownCharacters("a".into()))
+        );
+        assert_eq!(
+            table.mudder("456", "1", n(1)),
+            Err(UnknownCharacters("456".into()))
+        );
+        assert_eq!(
+            table.mudder("2", "abc", n(1)),
+            Err(UnknownCharacters("abc".into()))
+        );
+    }
+
+    #[test]
+    fn equal_strings_error() {
+        use error::GenerationError::MatchingStrings;
+        let table = SymbolTable::alphabet();
+        assert_eq!(
+            table.mudder("abc", "abc", n(1)),
+            Err(MatchingStrings("abc".into()))
+        );
+        assert_eq!(
+            table.mudder("xyz", "xyz", n(1)),
+            Err(MatchingStrings("xyz".into()))
+        );
+    }
+
+    // TODO: Make this test work.
+    // I need to find out how to tell if two strings are lexicographically inseparable.
+    // #[test]
+    // fn lexicographically_adjacent_strings_error() {
+    //     assert!(SymbolTable::alphabet().mudder("ba", "baa", n(1)).is_err());
+    // }
 
     #[test]
     fn reasonable_values() {
         let table = SymbolTable::from_str("ab").unwrap();
-        let result = table.mudder("a", "b", 1);
+        let result = table.mudder("a", "b", n(1)).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "ab");
         let table = SymbolTable::from_str("0123456789").unwrap();
-        let result = table.mudder("1", "2", 1);
+        let result = table.mudder("1", "2", n(1)).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "15");
     }
@@ -367,11 +506,11 @@ mod tests {
     #[test]
     fn outputs_more_or_less_match_mudderjs() {
         let table = SymbolTable::from_str("abc").unwrap();
-        let result = table.mudder("a", "b", 1);
+        let result = table.mudder("a", "b", n(1)).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "ac");
         let table = SymbolTable::alphabet();
-        let result = table.mudder("anhui", "azazel", 3);
+        let result = table.mudder("anhui", "azazel", n(3)).unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(vec!["aq", "as", "av"], result);
     }
@@ -379,14 +518,14 @@ mod tests {
     #[test]
     fn empty_start() {
         let table = SymbolTable::from_str("abc").unwrap();
-        let result = table.mudder("", "c", 2);
+        let result = table.mudder("", "c", n(2)).unwrap();
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn empty_end() {
         let table = SymbolTable::from_str("abc").unwrap();
-        let result = table.mudder("b", "", 2);
+        let result = table.mudder("b", "", n(2)).unwrap();
         assert_eq!(result.len(), 2);
     }
 
@@ -394,13 +533,13 @@ mod tests {
     fn only_amount() {
         let table = SymbolTable::alphabet();
         // TODO: Should we add an alias for this?
-        let result = table.mudder("", "", 10);
+        let result = table.mudder("", "", n(10)).unwrap();
         assert_eq!(result.len(), 10);
     }
 
     #[test]
     fn values_sorting_correct() {
-        let values = SymbolTable::alphabet().mudder("", "", 12);
+        let values = SymbolTable::alphabet().mudder("", "", n(12));
         let mut iter = values.into_iter();
         while let (Some(one), Some(two)) = (iter.next(), iter.next()) {
             assert!(one < two);
@@ -410,7 +549,7 @@ mod tests {
     #[test]
     fn differing_input_lengths() {
         let table = SymbolTable::alphabet();
-        let result = table.mudder("a", "ab", 1);
+        let result = table.mudder("a", "ab", n(1)).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].starts_with('a'));
     }
@@ -422,7 +561,7 @@ mod tests {
             // From z to a
             let mut right = String::from("z");
             for _ in 0..500 {
-                let new_val = dbg!(table.mudder("a", &right, 1))[0].clone();
+                let new_val = dbg!(table.mudder("a", &right, n(1)).unwrap())[0].clone();
                 assert!(new_val < right);
                 assert!(new_val.as_str() > "a");
                 right = new_val;
@@ -433,7 +572,7 @@ mod tests {
             let mut left = String::from("a");
             // TODO:    vv this test fails for higher numbers. FIXME!
             for _ in 0..17 {
-                let new_val = dbg!(table.mudder(&left, "z", 1))[0].clone();
+                let new_val = dbg!(table.mudder(&left, "z", n(1)).unwrap())[0].clone();
                 assert!(new_val > left);
                 assert!(new_val.as_str() < "z");
                 left = new_val;
@@ -486,21 +625,21 @@ mod tests {
     #[test]
     fn distance_between_first_chars_correct() {
         let table = SymbolTable::alphabet();
-        assert_eq!(table.distance_between_first_chars("a", "b"), 2);
-        assert_eq!(table.distance_between_first_chars("a", "z"), 26);
-        assert_eq!(table.distance_between_first_chars("", ""), 26);
-        assert_eq!(table.distance_between_first_chars("n", ""), 13);
-        assert_eq!(table.distance_between_first_chars("", "n"), 14);
-        assert_eq!(table.distance_between_first_chars("y", "z"), 2);
-        assert_eq!(table.distance_between_first_chars("a", "y"), 25);
+        assert_eq!(table.distance_between_first_chars("a", "b").unwrap(), 2);
+        assert_eq!(table.distance_between_first_chars("a", "z").unwrap(), 26);
+        assert_eq!(table.distance_between_first_chars("", "").unwrap(), 26);
+        assert_eq!(table.distance_between_first_chars("n", "").unwrap(), 13);
+        assert_eq!(table.distance_between_first_chars("", "n").unwrap(), 14);
+        assert_eq!(table.distance_between_first_chars("y", "z").unwrap(), 2);
+        assert_eq!(table.distance_between_first_chars("a", "y").unwrap(), 25);
         assert_eq!(
-            table.distance_between_first_chars("aaaa", "zzzz"),
-            table.distance_between_first_chars("aa", "zz")
+            table.distance_between_first_chars("aaaa", "zzzz").unwrap(),
+            table.distance_between_first_chars("aa", "zz").unwrap()
         );
 
         let table = SymbolTable::from_str("12345").unwrap();
-        assert_eq!(table.distance_between_first_chars("1", "2"), 2);
-        assert_eq!(table.distance_between_first_chars("1", "3"), 3);
-        assert_eq!(table.distance_between_first_chars("2", "3"), 2);
+        assert_eq!(table.distance_between_first_chars("1", "2").unwrap(), 2);
+        assert_eq!(table.distance_between_first_chars("1", "3").unwrap(), 3);
+        assert_eq!(table.distance_between_first_chars("2", "3").unwrap(), 2);
     }
 }

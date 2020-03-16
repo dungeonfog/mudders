@@ -14,18 +14,19 @@ for the original work of the author and their contributors!
 Add a dependency in your Cargo.toml:
 
 ```toml
-mudders = "0.0.1"
+mudders = "0.0.2"
 ```
 
 Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```rust
 use mudders::SymbolTable;
+use std::num::NonZeroUsize;
 
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
-let result = table.mudder("a", "z", 1);
+let result = table.mudder("a", "z", NonZeroUsize::new(1).unwrap()).unwrap();
 // These strings are always lexicographically placed between `start` and `end`.
 let one_string = result[0].as_str();
 assert!(one_string > "a");
@@ -33,14 +34,14 @@ assert!(one_string < "z");
 
 // You can also define your own symbol tables
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();
-let result = table.mudder("a", "b", 2);
+let result = table.mudder("a", "b", NonZeroUsize::new(2).unwrap()).unwrap();
 assert_eq!(result.len(), 2);
 assert!(result[0].as_str() > "a" && result[1].as_str() > "a");
 assert!(result[0].as_str() < "b" && result[1].as_str() < "b");
 
 // The strings *should* be evenly-spaced and as short as they can be.
 let table = SymbolTable::alphabet();
-let result = table.mudder("anhui", "azazel", 3);
+let result = table.mudder("anhui", "azazel", NonZeroUsize::new(3).unwrap()).unwrap();
 assert_eq!(result.len(), 3);
 assert_eq!(vec!["aq", "as", "av"], result);
 ```
