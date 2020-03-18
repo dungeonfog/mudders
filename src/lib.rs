@@ -399,7 +399,7 @@ pool: {pool:?} (length: {pool_len})",
             // if only the end has a first char, compare it to our first possible symbol.
             (None, Some(end_char)) => {
                 let start_u8 = self.0.first().unwrap();
-                ensure! { *start_u8 < end_char as u8, WrongCharOrder(*start_u8 as char, end_char) }
+                ensure! { *start_u8 <= end_char as u8, WrongCharOrder(*start_u8 as char, end_char) }
                 let distance = try_ascii_u8_from_char(end_char)? - start_u8;
                 if distance == 0 {
                     2
