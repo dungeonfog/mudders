@@ -14,23 +14,25 @@ for the original work of the author and their contributors!
 Add a dependency in your Cargo.toml:
 
 ```toml
-mudders = "0.0.2"
+mudders = "0.0.4"
 ```
 
 Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```rust
 use mudders::SymbolTable;
+// The mudder method takes a NonZeroUsize as the amount,
+// so you cannot pass in an invalid value.
 use std::num::NonZeroUsize;
 
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
-let result = table.mudder("a", "z", NonZeroUsize::new(1).unwrap()).unwrap();
+let result = table.mudder_one("a", "z").unwrap();
 // These strings are always lexicographically placed between `start` and `end`.
-let one_string = result[0].as_str();
-assert!(one_string > "a");
-assert!(one_string < "z");
+let one_str = result.as_str();
+assert!(one_str > "a");
+assert!(one_str < "z");
 
 // You can also define your own symbol tables
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();

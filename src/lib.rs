@@ -9,23 +9,25 @@ for the original work of the author and their contributors!
 Add a dependency in your Cargo.toml:
 
 ```toml
-mudders = "0.0.2"
+mudders = "0.0.4"
 ```
 
 Now you can generate lexicographically-spaced strings in a few different ways:
 
 ```
 use mudders::SymbolTable;
+// The mudder method takes a NonZeroUsize as the amount,
+// so you cannot pass in an invalid value.
 use std::num::NonZeroUsize;
 
 // You can use the included alphabet table
 let table = SymbolTable::alphabet();
 // SymbolTable::mudder() returns a Vec containing `amount` Strings.
-let result = table.mudder("a", "z", NonZeroUsize::new(1).unwrap()).unwrap();
+let result = table.mudder_one("a", "z").unwrap();
 // These strings are always lexicographically placed between `start` and `end`.
-let one_string = result[0].as_str();
-assert!(one_string > "a");
-assert!(one_string < "z");
+let one_str = result.as_str();
+assert!(one_str > "a");
+assert!(one_str < "z");
 
 // You can also define your own symbol tables
 let table = SymbolTable::from_chars(&['a', 'b']).unwrap();
@@ -202,6 +204,13 @@ impl SymbolTable {
         let mut depth =
             depth_for(dbg!(branching_factor), dbg!(computed_amount())) + dbg!(matching_count);
 
+        // if branching_factor == 1 {
+        //     // This should only be the case when we have an input like `"z", ""`.
+        //     // In this case, we can generate strings after the z, but we need
+        //     // to go one level deeper in any case.
+        //     depth += 1;
+        // }
+
         // TODO: Maybe keeping this as an iterator would be more efficient,
         // but it would have to be cloned at least once to get the pool length.
         let pool: Vec<String> = self.traverse("".into(), a, b, dbg!(depth)).collect();
@@ -268,6 +277,22 @@ pool: {pool:?} (length: {pool_len})",
             ensure! { result.len() == amount.get(), NotEnoughItemsInPool };
             result
         })
+    }
+
+    /// Convenience wrapper around `mudder` to generate exactly one string.
+    ///
+    /// # Safety
+    /// This function calls `NonZeroUsize::new_unchecked(1)`.
+    pub fn mudder_one(&self, a: &str, b: &str) -> Result<String, GenerationError> {
+        self.mudder(a, b, unsafe { NonZeroUsize::new_unchecked(1) })
+            .map(|mut vec| vec.remove(0))
+    }
+
+    /// Convenience wrapper around `mudder` to generate an amount of fresh strings.
+    ///
+    /// `SymbolTable.generate(amount)` is equivalent to `SymbolTable.mudder("", "", amount)`.
+    pub fn generate(&self, amount: NonZeroUsize) -> Result<Vec<String>, GenerationError> {
+        self.mudder("", "", amount)
     }
 
     /// Traverses a virtual tree of strings to the given depth.
@@ -359,9 +384,17 @@ pool: {pool:?} (length: {pool_len})",
             // if only the start has a first char, compare it to our last possible symbol.
             (Some(start_char), None) => {
                 let end_u8 = self.0.last().unwrap();
-                ensure! { start_char < *end_u8 as char, WrongCharOrder(start_char, *end_u8 as char) }
+                // In this case, we allow the start and end char to be equal.
+                // This is because you can generate something after the last char,
+                // but not before the first char.
+                //                   vv
+                ensure! { start_char <= *end_u8 as char, WrongCharOrder(start_char, *end_u8 as char) }
                 let distance = end_u8 - try_ascii_u8_from_char(start_char)?;
-                distance as usize + 1
+                if distance == 0 {
+                    2
+                } else {
+                    distance as usize + 1
+                }
             }
             // if only the end has a first char, compare it to our first possible symbol.
             (None, Some(end_char)) => {
@@ -411,6 +444,7 @@ mod tests {
     use super::*;
     use std::num::NonZeroUsize;
 
+    /// Create and unwrap a NonZeroUsize from the given usize.
     fn n(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).unwrap()
     }
@@ -444,28 +478,28 @@ mod tests {
         // You cannot pass in strings with characters not in the SymbolTable:
         let table = SymbolTable::alphabet();
         assert_eq!(
-            table.mudder("123", "()/", n(1)),
+            table.mudder_one("123", "()/"),
             Err(UnknownCharacters("123".into()))
         );
         assert_eq!(
-            table.mudder("a", "123", n(1)),
+            table.mudder_one("a", "123"),
             Err(UnknownCharacters("123".into()))
         );
         assert_eq!(
-            table.mudder("0)(", "b", n(1)),
+            table.mudder_one("0)(", "b"),
             Err(UnknownCharacters("0)(".into()))
         );
         let table = SymbolTable::from_str("123").unwrap();
         assert_eq!(
-            table.mudder("a", "b", n(1)),
+            table.mudder_one("a", "b"),
             Err(UnknownCharacters("a".into()))
         );
         assert_eq!(
-            table.mudder("456", "1", n(1)),
+            table.mudder_one("456", "1"),
             Err(UnknownCharacters("456".into()))
         );
         assert_eq!(
-            table.mudder("2", "abc", n(1)),
+            table.mudder_one("2", "abc"),
             Err(UnknownCharacters("abc".into()))
         );
     }
@@ -475,11 +509,11 @@ mod tests {
         use error::GenerationError::MatchingStrings;
         let table = SymbolTable::alphabet();
         assert_eq!(
-            table.mudder("abc", "abc", n(1)),
+            table.mudder_one("abc", "abc"),
             Err(MatchingStrings("abc".into()))
         );
         assert_eq!(
-            table.mudder("xyz", "xyz", n(1)),
+            table.mudder_one("xyz", "xyz"),
             Err(MatchingStrings("xyz".into()))
         );
     }
@@ -494,21 +528,18 @@ mod tests {
     #[test]
     fn reasonable_values() {
         let table = SymbolTable::from_str("ab").unwrap();
-        let result = table.mudder("a", "b", n(1)).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "ab");
+        let result = table.mudder_one("a", "b").unwrap();
+        assert_eq!(result, "ab");
         let table = SymbolTable::from_str("0123456789").unwrap();
-        let result = table.mudder("1", "2", n(1)).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "15");
+        let result = table.mudder_one("1", "2").unwrap();
+        assert_eq!(result, "15");
     }
 
     #[test]
     fn outputs_more_or_less_match_mudderjs() {
         let table = SymbolTable::from_str("abc").unwrap();
-        let result = table.mudder("a", "b", n(1)).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "ac");
+        let result = table.mudder_one("a", "b").unwrap();
+        assert_eq!(result, "ac");
         let table = SymbolTable::alphabet();
         let result = table.mudder("anhui", "azazel", n(3)).unwrap();
         assert_eq!(result.len(), 3);
@@ -530,17 +561,23 @@ mod tests {
     }
 
     #[test]
+    fn generate_after_z() {
+        let table = SymbolTable::alphabet();
+        let result = table.mudder("z", "", n(10)).unwrap();
+        assert_eq!(result.len(), 10);
+        assert!(result.iter().all(|k| k.as_str() > "z"));
+    }
+
+    #[test]
     fn only_amount() {
         let table = SymbolTable::alphabet();
-        // TODO: Should we add an alias for this?
-        let result = table.mudder("", "", n(10)).unwrap();
+        let result = table.generate(n(10)).unwrap();
         assert_eq!(result.len(), 10);
     }
 
     #[test]
     fn values_sorting_correct() {
-        let values = SymbolTable::alphabet().mudder("", "", n(12));
-        let mut iter = values.into_iter();
+        let mut iter = SymbolTable::alphabet().generate(n(12)).into_iter();
         while let (Some(one), Some(two)) = (iter.next(), iter.next()) {
             assert!(one < two);
         }
@@ -549,9 +586,8 @@ mod tests {
     #[test]
     fn differing_input_lengths() {
         let table = SymbolTable::alphabet();
-        let result = table.mudder("a", "ab", n(1)).unwrap();
-        assert_eq!(result.len(), 1);
-        assert!(result[0].starts_with('a'));
+        let result = table.mudder_one("a", "ab").unwrap();
+        assert!(result.starts_with('a'));
     }
 
     #[test]
@@ -561,7 +597,7 @@ mod tests {
             // From z to a
             let mut right = String::from("z");
             for _ in 0..500 {
-                let new_val = dbg!(table.mudder("a", &right, n(1)).unwrap())[0].clone();
+                let new_val = dbg!(table.mudder_one("a", &right).unwrap());
                 assert!(new_val < right);
                 assert!(new_val.as_str() > "a");
                 right = new_val;
@@ -572,7 +608,7 @@ mod tests {
             let mut left = String::from("a");
             // TODO:    vv this test fails for higher numbers. FIXME!
             for _ in 0..17 {
-                let new_val = dbg!(table.mudder(&left, "z", n(1)).unwrap())[0].clone();
+                let new_val = dbg!(table.mudder_one(&left, "z").unwrap());
                 assert!(new_val > left);
                 assert!(new_val.as_str() < "z");
                 left = new_val;

@@ -1,6 +1,6 @@
 [package]
 name = "mudders"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Follpvosten <wolfi@karpador.xyz>"]
 edition = "2018"
 description = "Generating Lexicographically-Evenly-Spaced Strings, or: Mudder.js in Rust."
