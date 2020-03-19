@@ -561,6 +561,19 @@ mod tests {
     }
 
     #[test]
+    fn generate_before_ax() {
+        // While you can't generate anything before 'a' with alphabet(), you
+        // should be able to generate something before "a" + something else.
+        let table = SymbolTable::alphabet();
+        let result = table.mudder("", "axxx", n(10)).unwrap();
+        assert_eq!(result.len(), 10);
+        assert!(result.iter().all(|k| k.as_str() > "a"));
+        // Some more to be sure
+        assert!(table.mudder_one("", "ab").is_ok());
+        assert!(table.mudder_one("", "abc").is_ok());
+    }
+
+    #[test]
     fn generate_after_z() {
         let table = SymbolTable::alphabet();
         let result = table.mudder("z", "", n(10)).unwrap();
