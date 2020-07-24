@@ -204,54 +204,17 @@ impl SymbolTable {
         let mut depth =
             depth_for(dbg!(branching_factor), dbg!(computed_amount())) + dbg!(matching_count);
 
-        // if branching_factor == 1 {
-        //     // This should only be the case when we have an input like `"z", ""`.
-        //     // In this case, we can generate strings after the z, but we need
-        //     // to go one level deeper in any case.
-        //     depth += 1;
-        // }
-
         // TODO: Maybe keeping this as an iterator would be more efficient,
         // but it would have to be cloned at least once to get the pool length.
-        let pool: Vec<String> = self.traverse("".into(), a, b, dbg!(depth)).collect();
-        let pool = if (pool.len() as isize).saturating_sub(non_empty_input_count as isize)
-            < amount.get() as isize
-        {
-            depth += depth_for(branching_factor, computed_amount() + pool.len());
-            dbg!(self.traverse("".into(), a, b, dbg!(depth)).collect())
-        } else {
-            pool
-        };
-        if (pool.len() as isize).saturating_sub(non_empty_input_count as isize)
-            < amount.get() as isize
-        {
-            // We still don't have enough items, so bail
-            panic!(
-                "Internal error: Failed to calculate the correct tree depth!
-This is a bug. Please report it at: https://github.com/Follpvosten/mudders/issues
-and make sure to include the following information:
+        let mut pool: Vec<String> = self.traverse("".into(), a, b, dbg!(depth)).collect();
 
-Symbols in table: {symbols:?}
-Given inputs: {a:?}, {b:?}, amount: {amount}
-matching_count: {m_count}
-non_empty_input_count: {ne_input_count}
-required pool length (computed amount): {comp_amount}
-branching_factor: {b_factor}
-final depth: {depth}
-pool: {pool:?} (length: {pool_len})",
-                symbols = self.0.iter().map(|i| *i as char).collect::<Box<[_]>>(),
-                a = a,
-                b = b,
-                amount = amount,
-                m_count = matching_count,
-                ne_input_count = non_empty_input_count,
-                comp_amount = computed_amount(),
-                b_factor = branching_factor,
-                depth = depth,
-                pool = pool,
-                pool_len = pool.len(),
-            )
+        while (pool.len() as isize).saturating_sub(non_empty_input_count as isize)
+            < amount.get() as isize
+        {
+            depth += 1;
+            pool = dbg!(self.traverse("".into(), a, b, dbg!(depth)).collect());
         }
+
         Ok(if amount.get() == 1 {
             pool.get(pool.len() / 2)
                 .map(|item| vec![item.clone()])
@@ -579,6 +542,8 @@ mod tests {
         let result = table.mudder("z", "", n(10)).unwrap();
         assert_eq!(result.len(), 10);
         assert!(result.iter().all(|k| k.as_str() > "z"));
+        // Same issue as with before ax.
+        assert!(table.mudder_one("zy", "").is_ok());
     }
 
     #[test]
@@ -627,6 +592,13 @@ mod tests {
                 left = new_val;
             }
         }
+    }
+
+    #[test]
+    fn generate_amounts() {
+        let table = SymbolTable::alphabet();
+        assert!(table.generate(n(1)).is_ok());
+        assert!(table.generate(n(3)).is_ok());
     }
 
     // Internal/private method tests:
